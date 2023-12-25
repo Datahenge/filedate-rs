@@ -2,18 +2,18 @@
 
 This package provides 3 key functions:
 
-1. Given a filename, intelligently embed a valid ISO 8601 datetime string into the name.  Storing datetime in filenames is useful in many applications, such as backup scripts.
+1. Given a filename, intelligently append a valid ISO 8601 datetime string.  Storing datetime in filenames is useful in many applications, such as backup scripts.
    
-2. Given a filename containing an ISO 8601 datetime string, return a Python Dictionary of useful metadata.
+2. Given a filename containing an ISO 8601 datetime string, return an object (keys, values) containing useful metadata.
 
-3. Given one or more directories of such files, build an array of such Dictionaries.  With the *addition* of Sort Codes, for knowing a file's relative position compared to others, based on datetime.
+3. Given one or more directories of such files, build an array of such objects.  With the *additional* feature of Sort Codes, for knowing a file's relative position compared to others, based on datetime.
 
 #### Latest version
-The latest version is 0.0.2
+The latest version is 0.2.0
 
 ### Installation
 #### From crates.io
-`cargo install filedate`
+`cargo install filedate-rs`
 
 #### From Source
 ```bash
@@ -68,7 +68,7 @@ my_file_name = 'myfile_summary_2020-03-04T170054-0800.tar.gz'
 metadata = build_file_metadata(my_file_name)
 print(metadata)
 ```
-Results would be the following Python Dictionary:
+Results would be the following object:
 ```
 {
     'path': PosixPath('myfile_summary_2020-03-04T170054-0800.tar.gz'),

@@ -1,0 +1,97 @@
+use path_dsl::path;
+
+
+// Originally 2 functions (&str and &Path), I'm now using AsRef to handle both types of argument.
+
+pub fn stamp_path<S>(parm_path: S,
+    parm_date_time: &Option<DateTime<FixedOffset>>) -> Result<PathBuf, &str>
+    where S: AsRef<Path> {
+
+    // Final component, without any leading directories.
+    let filename_as_str: &str = parm_path.as_ref().file_name().unwrap().to_str().unwrap();
+    let parent: Option<&Path> = parm_path.as_ref().parent();
+
+    // Either convert the argument, or get current UTC time.
+    let dt_string: String = datetime_to_iso_string(&parm_date_time);
+    
+    let mut new_name: String;
+
+    if parm_path.as_ref().parent().is_some() {
+        let parent: &Path = parm_path.as_ref().parent().unwrap();
+        
+        if parm_path.as_ref().extension().is_none() {
+            new_name =  format!("{}_{}", filename_as_str, dt_string);
+            return Ok(path!(parent | new_name));
+        }      
+    }
+
+    if parm_path.as_ref().extension().is_none() {
+	    return format!("{}_{}", filename.stem, dt_string);
+	}
+
+	format!("{}_{}.{}",
+		filename.stem,
+		dt_string,
+		filename.extension.unwrap_or(String::from(""))
+	)
+}
+
+// -----------------------------------------------------------------
+
+	---------------------------
+	
+	
+	pub fn parse_path_parts(path: &Path) -> Result<PathParts, &str> {
+    // Accept and return references.  No ownership changes.  No Heap strings.
+    // Returns 'stem' and 'extension'
+    // This is where we handle multiple extensions like '.tar.gz'
+    // UTF-8 for a '.' (period, dot, full stop) is 2E
+
+    if path.is_dir() {
+        return DatedPath {
+
+        }
+    }
+    let path_as_str: &str = path.file_name().unwrap().to_str().unwrap();
+
+    if path.as_os_str().to_str().unwrap() == "." {
+        return Err("Invalid file name: a single Unicode character U+002E (known as 'period' or 'full stop')")
+    }
+
+    let parent_dir: Option<&Path> = path.parent();
+
+    // If there is a leading period (Unix hidden filename), skip it.
+    let mut index_start: usize = 0;
+    if path_as_str.starts_with('.') {
+        index_start = 1;
+    }
+
+    // Example of components:  ['some_file_name', 'tar', 'gz']
+    let components: Vec<&str> = filename[index_start..].split('.').collect();
+
+    // Scenario 1: Single component, no extensions.
+    if components.len() == 1 && components[0] == &filename[index_start..] {
+        return Ok((filename, None))
+    }
+
+    // Scenario 2: There exists at least 1 potential extension.
+    let mut stop_index: usize = 0;
+    for (index, component) in components.iter().enumerate() {
+
+        if index == 0 {
+            stop_index = index_start + component.len();
+            continue;
+        }
+
+        // If extension is valid, use indices to return the components.
+        if is_extension_valid(component) {
+            // println!("Stem: {}", &filename[0..stop_index]);
+            // println!("Found valid extension: {:?}",  Some(&filename[stop_index+1..]));
+            return Ok((&filename[0..stop_index], Some(&filename[(stop_index+1)..])));
+        }
+        // Otherwise increment the index, and keep searching.
+        stop_index += component.len() + 1; // the additional 1 represents the dot/period separator.
+    };
+
+    // Scenario 3: No extensions were found.
+    Ok((filename, None))

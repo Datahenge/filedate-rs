@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"rust-analyzer": {
+		"highlightingOn": true,	
+	},
+	"settings": {
+		"rust-analyzer.highlightingOn": true,
+		"rust-analyzer.inlayHints.chainingHints": false,
+		"rust-analyzer.inlayHints.parameterHints": false,
+		"rust-analyzer.inlayHints.typeHints": false,
+		"rust-client.rustupPath": "~/.cargo/bin/rustup",
+		"rust-client.revealOutputChannelOn": "warn",
+		"rust-client.channel": "stable",
+		"rust-analyzer.checkOnSave.command": "clippy"
+		
+	}
+}

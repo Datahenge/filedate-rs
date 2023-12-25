@@ -1,0 +1,409 @@
+stages:
+  - build
+  - deploy
+  - release
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  MSRV: "1.56"
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${BINARY_NAME}/${CI_COMMIT_TAG}"
+  RUST_DISABLE_WINDOWS: "false"
+
+workflow:
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+
+rust-clippy-x86_64:
+  stage: build
+  image: rust:latest
+  cache: &cache
+    key: $CI_JOB_NAME
+    paths:
+      - .cargo
+      - target
+  before_script:
+    - rustup component add rustfmt
+    - rustup component add clippy
+    - cargo install cargo-hack
+  script:
+    - cargo fmt -- --check
+    - cargo hack clippy --feature-powerset --no-dev-deps -- -D warnings
+  after_script: &cleanup
+    - cargo install cargo-cache --no-default-features --features ci-autoclean
+    - cargo cache
+    - cargo install cargo-sweep
+    - cargo sweep -t 4
+    - cargo sweep -i
+
+rust-latest-x86_64:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  script:
+    - cargo test --all-features --verbose
+  after_script: *cleanup
+
+rust-msrv-x86_64:
+  stage: build
+  image: rust:$MSRV
+  cache: *cache
+  script:
+    - cargo test --all-features --verbose
+  after_script: *cleanup
+
+rust-nightly:
+  stage: build
+  image: rustlang/rust:nightly
+  cache:
+    key: $CI_JOB_NAME
+    paths:
+      - .cargo
+  script: &do
+    - cargo build --all-features --verbose
+    - cargo test --all-features --verbose
+  after_script:
+    - cargo install cargo-cache --no-default-features --features ci-autoclean
+    - cargo cache
+  allow_failure: true
+
+rust-binary-x86_64:
+  stage: deploy
+  image: rust:latest
+  needs:
+    - job: rust-latest-x86_64
+      artifacts: false
+    - job: rust-clippy-x86_64
+      artifacts: false
+  cache: *cache
+  script:
+    - cargo build --release --locked --verbose
+    - mv "target/release/$BINARY_NAME" "${BINARY_NAME}-x86_64"
+  after_script: *cleanup
+  rules:
+    - if: $BINARY_NAME
+  artifacts:
+    paths:
+      - "${BINARY_NAME}-x86_64"
+
+rust-security:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  before_script:
+    - cargo install cargo-audit
+  script:
+    - cargo audit -D warnings $CARGO_AUDIT
+
+docker:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  rules:
+    - exists:
+        - Dockerfile
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:latest || true
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest --tag $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:latest
+
+.rust-coverage:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  before_script:
+    - cargo install cargo-tarpaulin
+  script:
+    - cargo tarpaulin --all-features --out=Xml --out=Html --output-dir=coverage
+  after_script:
+    - mv coverage/tarpaulin-report.html coverage/index.html
+    - mkdir -p public
+    - mv coverage/ public/coverage/
+    # Clean cache
+    - cargo install cargo-cache --no-default-features --features ci-autoclean
+    - cargo cache
+    - cargo install cargo-sweep
+    - cargo sweep -t 4
+    - cargo sweep -i
+  artifacts:
+    paths:
+      - public/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: public/coverage/cobertura.xml
+  coverage: '/(\d+\.\d+)% coverage/'
+
+.pages:
+  stage: deploy
+  image: rustlang/rust:nightly
+  cache:
+    key: $CI_JOB_NAME
+    paths:
+      - .cargo
+  before_script:
+    - mkdir -p public
+  variables:
+    RUSTDOCFLAGS: --cfg docs
+  script:
+    - cargo doc --all-features --no-deps
+    - mv target/doc/* public/
+  after_script:
+    - cargo install cargo-cache --no-default-features --features ci-autoclean
+    - cargo cache
+  artifacts:
+    paths:
+      - public
+  only:
+    - master
+    - main
+
+# Cross-compile for armv7-unknown-linux-gnueabihf
+rust-latest-armv7:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  variables:
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-arm-linux-gnueabihf -y -qq
+    - rustup target add armv7-unknown-linux-gnueabihf
+    - rustup component add clippy
+  script:
+    - cargo clippy --target armv7-unknown-linux-gnueabihf --all-features -- -D warnings
+    - cargo build --target armv7-unknown-linux-gnueabihf --all-features --verbose
+  after_script: *cleanup
+
+# Cross-compile for armv7-unknown-linux-gnueabihf
+rust-msrv-armv7:
+  stage: build
+  image: rust:$MSRV
+  cache: *cache
+  variables:
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-arm-linux-gnueabihf -y -qq
+    - rustup target add armv7-unknown-linux-gnueabihf
+  script:
+    - cargo build --target armv7-unknown-linux-gnueabihf --all-features --verbose
+  after_script: *cleanup
+
+rust-binary-armv7:
+  stage: deploy
+  image: rust:latest
+  needs:
+    - job: rust-latest-armv7
+      artifacts: false
+  cache: *cache
+  variables:
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-arm-linux-gnueabihf -y -qq
+    - rustup target add armv7-unknown-linux-gnueabihf
+  script:
+    - cargo build --target armv7-unknown-linux-gnueabihf --release --locked --verbose
+    - mv "target/armv7-unknown-linux-gnueabihf/release/$BINARY_NAME" "${BINARY_NAME}-armv7"
+  after_script: *cleanup
+  rules:
+    - if: $BINARY_NAME
+  artifacts:
+    paths:
+      - "${BINARY_NAME}-armv7"
+
+# Cross-compile for aarch64-unknown-linux-gnu
+rust-latest-aarch64:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  variables:
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-aarch64-linux-gnu -y -qq
+    - rustup target add aarch64-unknown-linux-gnu
+    - rustup component add clippy
+  script:
+    - cargo clippy --target aarch64-unknown-linux-gnu --all-features -- -D warnings
+    - cargo build --target aarch64-unknown-linux-gnu --all-features --verbose
+  after_script: *cleanup
+
+rust-msrv-aarch64:
+  stage: build
+  image: rust:$MSRV
+  cache: *cache
+  variables:
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-aarch64-linux-gnu -y -qq
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cargo build --target aarch64-unknown-linux-gnu --all-features --verbose
+  after_script: *cleanup
+
+rust-binary-aarch64:
+  stage: deploy
+  image: rust:latest
+  needs:
+    - job: rust-latest-aarch64
+      artifacts: false
+  cache: *cache
+  variables:
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-aarch64-linux-gnu -y -qq
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cargo build --target aarch64-unknown-linux-gnu --release --locked --verbose
+    - mv "target/aarch64-unknown-linux-gnu/release/$BINARY_NAME" "${BINARY_NAME}-aarch64"
+  after_script: *cleanup
+  rules:
+    - if: $BINARY_NAME
+  artifacts:
+    paths:
+      - "${BINARY_NAME}-aarch64"
+
+# Cross-compile for x86_64-pc-windows-gnu
+rust-latest-windows64:
+  stage: build
+  image: rust:latest
+  cache: *cache
+  variables:
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-mingw-w64-x86-64 -y -qq
+    - rustup target add x86_64-pc-windows-gnu
+    - rustup component add clippy
+  script:
+    - cargo clippy --target x86_64-pc-windows-gnu --all-features -- -D warnings
+    - cargo build --target x86_64-pc-windows-gnu --all-features --verbose
+  after_script: *cleanup
+  rules:
+    - if: $RUST_DISABLE_WINDOWS =~ /^(1|yes|true)$/
+      when: never
+    - when: on_success
+
+rust-msrv-windows64:
+  stage: build
+  image: rust:$MSRV
+  cache: *cache
+  variables:
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-mingw-w64-x86-64 -y -qq
+    - rustup target add x86_64-pc-windows-gnu
+  script:
+    - cargo build --target x86_64-pc-windows-gnu --all-features --verbose
+  after_script: *cleanup
+  rules:
+    - if: $RUST_DISABLE_WINDOWS =~ /^(1|yes|true)$/
+      when: never
+    - when: on_success
+
+rust-binary-windows64:
+  stage: deploy
+  image: rust:latest
+  needs:
+    - job: rust-latest-windows64
+      artifacts: false
+      optional: true
+  cache: *cache
+  variables:
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+  before_script:
+    - apt-get update -qq && apt-get install gcc-mingw-w64-x86-64 -y -qq
+    - rustup target add x86_64-pc-windows-gnu
+  script:
+    - cargo build --target x86_64-pc-windows-gnu --release --locked --verbose
+    - mv "target/x86_64-pc-windows-gnu/release/${BINARY_NAME}.exe" "${BINARY_NAME}-windows64.exe"
+  after_script: *cleanup
+  rules:
+    - if: $RUST_DISABLE_WINDOWS =~ /^(1|yes|true)$/ || $BINARY_NAME == null
+      when: never
+    - when: on_success
+  artifacts:
+    paths:
+      - "${BINARY_NAME}-windows64.exe"
+
+upload-binary:
+  stage: release
+  image: debian:latest
+  rules:
+    - if: $CI_COMMIT_TAG && $BINARY_NAME
+  needs:
+    - job: rust-binary-x86_64
+      artifacts: true
+    - job: rust-binary-armv7
+      artifacts: true
+    - job: rust-binary-aarch64
+      artifacts: true
+    - job: rust-binary-windows64
+      artifacts: true
+      optional: true
+  before_script:
+    - apt-get update -qq && apt-get install curl -y -qq
+  script:
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "${BINARY_NAME}-x86_64" "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-x86_64"
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "${BINARY_NAME}-armv7" "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-armv7"
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "${BINARY_NAME}-aarch64" "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-aarch64"
+      test -f "${BINARY_NAME}-windows64.exe" && curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "${BINARY_NAME}-windows64.exe" "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-windows64.exe" ||:
+
+release-binary-nowindows:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG && $BINARY_NAME && $RUST_DISABLE_WINDOWS =~ /^(1|yes|true)$/
+  needs:
+    - job: upload-binary
+      artifacts: false
+  script:
+    - echo 'running release_job for $CI_COMMIT_TAG'
+  release:
+    tag_name: '$CI_COMMIT_TAG'
+    description: 'Release of $CI_COMMIT_TAG, see CHANGELOG for more details.'
+    ref: '$CI_COMMIT_SHA'
+    assets:
+      links:
+        - name: "${BINARY_NAME}-x86_64"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-x86_64"
+          filepath: "/binaries/${BINARY_NAME}-x86_64"
+        - name: "${BINARY_NAME}-armv7"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-armv7"
+          filepath: "/binaries/${BINARY_NAME}-armv7"
+        - name: "${BINARY_NAME}-aarch64"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-aarch64"
+          filepath: "/binaries/${BINARY_NAME}-aarch64"
+
+release-binary-pluswindows:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $RUST_DISABLE_WINDOWS =~ /^(1|yes|true)$/ || $CI_COMMIT_TAG == null || $BINARY_NAME == null
+      when: never
+    - when: on_success
+  needs:
+    - job: upload-binary
+      artifacts: false
+  script:
+    - echo 'running release_job for $CI_COMMIT_TAG'
+  release:
+    tag_name: '$CI_COMMIT_TAG'
+    description: 'Release of $CI_COMMIT_TAG, see CHANGELOG for more details.'
+    ref: '$CI_COMMIT_SHA'
+    assets:
+      links:
+        - name: "${BINARY_NAME}-x86_64"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-x86_64"
+          filepath: "/binaries/${BINARY_NAME}-x86_64"
+        - name: "${BINARY_NAME}-armv7"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-armv7"
+          filepath: "/binaries/${BINARY_NAME}-armv7"
+        - name: "${BINARY_NAME}-aarch64"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-aarch64"
+          filepath: "/binaries/${BINARY_NAME}-aarch64"
+        - name: "${BINARY_NAME}-windows64.exe"
+          url: "${PACKAGE_REGISTRY_URL}/${BINARY_NAME}-windows64.exe"
+          filepath: "/binaries/${BINARY_NAME}-windows64.exe"

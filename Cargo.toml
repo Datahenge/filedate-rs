@@ -1,0 +1,25 @@
+[package]
+name = "filedate-rs"
+version = "0.2.0"
+authors = ["Brian <brian@datahenge.com>"]
+edition = "2021"
+# Tested with rustc 1.74.1
+
+[lib]
+name = "filedate"
+path  = "src/lib.rs"
+
+[[bin]]
+name = "filedate"
+path = "src/bin.rs"
+
+[dependencies]
+chrono = "0.4.11"
+json = "0.12.4"
+regex = "1"
+serde = { version = "1.0.110", features = ["derive"] }
+serde_json = "1.0.53"
+
+[dependencies.clap]
+version = "2.33.3"
+features = ["yaml", "suggestions", "color" ]

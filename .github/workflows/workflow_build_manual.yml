@@ -1,0 +1,67 @@
+name: Manual Workflow to build OS-specific binaries
+
+on:
+  workflow_call:
+    inputs:
+      app_version:
+        description: "App Semantic Version."
+        required: true
+        type: string
+      operating_system:
+        description: "Target OS"
+        required: true
+        type: string
+      tag:
+        description: "Tag of the release"
+        required: true
+        type: string
+
+jobs:
+  build_some_linux:
+    name: Build binaries for a Linux operating system
+    runs-on: ${{ inputs.operating_system }}
+    steps:
+      - name: Show GLIBC
+        run: ldd --version
+
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Set environment variables
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "APP_VERSION=${{ github.event.inputs.btu_version }}" >> $GITHUB_ENV
+          echo "INPUT_TAG=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build Rust Binaries
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.INPUT_TAG }}
+          release_name: ${{ env.INPUT_TAG }}
+          body: HQ ${{ env.INPUT_TAG }}
+          draft: false
+          # prerelease: true
+
+      - name: Upload the FileDate
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.ARCHIVE_NAME_DAEMON }}
+          asset_name: ${{ env.ARCHIVE_NAME_DAEMON }}
+          asset_content_type: application/tar+gzip
